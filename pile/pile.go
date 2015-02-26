@@ -15,9 +15,11 @@ import (
 // Chunk is a piece of a binary object
 type Chunk interface {
 	io.ReadWriteCloser
+	Last() bool
 }
 
 // Pile abstracts an underlying method of storing chunks
 type Pile interface {
 	Chunk(name string, part int) Chunk
+	LastChunk(name string, part int) error
 }

@@ -1,13 +1,13 @@
 package pile
 
 import (
-	"testing"
 	. "github.com/smartystreets/goconvey/convey"
+	"testing"
 
-	"os"
-	"path/filepath"
 	"io"
 	"io/ioutil"
+	"os"
+	"path/filepath"
 )
 
 var TEST_NAME = "chunkbuffer-fp-test"

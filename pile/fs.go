@@ -32,5 +32,24 @@ func (fp FilePile) Chunk(name string, part int) Chunk {
 		file, err = os.Create(filename)
 	}
 
-	return file
+	return fileChunk{file}
+}
+
+// LastChunk is marked by an subsequent next chunk
+func (fp FilePile) LastChunk(name string, part int) error {
+	_, err := fp.Chunk(name, part+1).Write([]byte{})
+	return err
+}
+
+// fileChunk implements the Chunk interface for files
+type fileChunk struct {
+	*os.File
+}
+
+// Last chunk if the file doesn't exist or is non-empty
+func (fc fileChunk) Last() bool {
+	if fi, err := fc.Stat(); err != nil || fi.Size() == 0 {
+		return true
+	}
+	return false
 }
