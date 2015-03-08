@@ -16,7 +16,6 @@ type writer struct {
 	buf sharedbuffer.SharedBuffer
 	wm  meters.WriteMeter
 
-	written  int64
 	nextErrs chan error
 }
 
@@ -27,11 +26,15 @@ func newWriter(name string, pile pile.Pile, chunkSize int) *writer {
 		pile:      pile,
 		chunkSize: int64(chunkSize),
 		buf:       *sharedbuffer.New(),
-		written:   0,
 		nextErrs:  make(chan error),
 	}
 	w.wm = *meters.NewWriteMeter(&w.buf)
 	return &w
+}
+
+// written byte count so far
+func (w *writer) written() int64 {
+	return w.wm.Reading()
 }
 
 // Write data into the ChunkBuffer, blocking until complete.
@@ -44,24 +47,24 @@ func (w *writer) Write(p []byte) (n int, err error) {
 		return
 	}
 
-	cs, pending := w.chunkSize, w.wm.Reading()
-	next, last := w.nextChunk(), pending/cs
+	cs := w.chunkSize
+	next, last := w.nextChunk(w.written()), w.written()/cs
+	old_written := w.written() - int64(n)
 
-	var written int64
-	written, w.written = w.written, w.wm.Reading()
-	var errors chan error
-	errors, w.nextErrs = w.nextErrs, make(chan error)
+	errors := w.nextErrs
+	w.nextErrs = make(chan error)
 
 	// wait on this write's last chunk if it's complete
-	if pending%cs == 0 {
+	if w.written()%cs == 0 {
 		last += 1
 	}
 
+	// start complete chunks
 	for c := next; c < last; c += 1 {
 		go w.writeChunk(c, errors)
 	}
 
-	if written%cs != 0 {
+	if old_written%cs != 0 {
 		next -= 1
 	}
 
@@ -75,8 +78,8 @@ func (w *writer) Write(p []byte) (n int, err error) {
 		return
 	}
 
-	// start an incomplete chunk
-	if pending%cs != 0 {
+	// start next incomplete chunk
+	if w.nextChunk(w.written()) > w.nextChunk(old_written) {
 		go w.writeChunk(last, w.nextErrs)
 	}
 
@@ -88,13 +91,13 @@ func (w *writer) Close() error {
 	go w.buf.Close()
 
 	var err error
-	if w.written%w.chunkSize != 0 {
+	if w.written()%w.chunkSize != 0 {
 		err = <-w.nextErrs
 	}
 	w.nextErrs = nil
 
 	if err == nil {
-		err = w.pile.LastChunk(w.name, int(w.nextChunk())-1)
+		err = w.pile.LastChunk(w.name, int(w.nextChunk(w.written())-1))
 	}
 
 	return err
@@ -117,6 +120,6 @@ func (w *writer) writeChunk(n int64, err chan<- error) {
 }
 
 // nextChunk number
-func (w writer) nextChunk() int64 {
-	return (w.written + w.chunkSize - 1) / w.chunkSize
+func (w writer) nextChunk(bytes int64) int64 {
+	return (bytes + w.chunkSize - 1) / w.chunkSize
 }

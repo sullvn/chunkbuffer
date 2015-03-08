@@ -33,5 +33,24 @@ func TestChunkBuffer(t *testing.T) {
 				So(out, ShouldResemble, data)
 			})
 		})
+
+		Convey("When data is written in small pieces", func() {
+			small, d := CHUNK_SIZE/5, make([]byte, 0)
+			copy(d, data)
+
+			for len(d) > small {
+				cb.Write(d[:small])
+				d = d[small:]
+			}
+			if len(d) > 0 {
+				cb.Write(d)
+			}
+
+			Convey("Then it should be read out, fully intact", func() {
+				out, err := ioutil.ReadAll(cb)
+				So(err, ShouldBeNil)
+				So(out, ShouldResemble, data)
+			})
+		})
 	})
 }
