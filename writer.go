@@ -16,7 +16,8 @@ type writer struct {
 	buf sharedbuffer.SharedBuffer
 	wm  meters.WriteMeter
 
-	nextErrs chan error
+	nextErrs  chan error
+	lastChunk pile.ChunkWriter
 }
 
 // newWriter creates new writer end of ChunkBuffer
@@ -27,6 +28,7 @@ func newWriter(name string, pile pile.Pile, chunkSize int) *writer {
 		chunkSize: int64(chunkSize),
 		buf:       *sharedbuffer.New(),
 		nextErrs:  make(chan error),
+		lastChunk: nil,
 	}
 	w.wm = *meters.NewWriteMeter(&w.buf)
 	return &w
@@ -48,8 +50,8 @@ func (w *writer) Write(p []byte) (n int, err error) {
 	}
 
 	cs := w.chunkSize
-	next, last := w.nextChunk(w.written()), w.written()/cs
 	old_written := w.written() - int64(n)
+	next, last := w.nextChunk(old_written), w.written()/cs
 
 	errors := w.nextErrs
 	w.nextErrs = make(chan error)
@@ -59,11 +61,25 @@ func (w *writer) Write(p []byte) (n int, err error) {
 		last += 1
 	}
 
-	// start complete chunks
+	// initialize source readers for complete chunks
+	srcsN := 0
+	if last-next > 0 {
+		srcsN = int(last - next)
+	}
+	srcs := make([]io.ReadCloser, srcsN)
 	for c := next; c < last; c += 1 {
-		go w.writeChunk(c, errors)
+		srcs[c-next], err = w.sourceChunk(c)
+		if err != nil {
+			return
+		}
 	}
 
+	// start writing chunks from source readers
+	for c := next; c < last; c += 1 {
+		go w.writeChunk(srcs[c-next], c, errors)
+	}
+
+	// consider waiting on previously incomplete chunk
 	if old_written%cs != 0 {
 		next -= 1
 	}
@@ -80,7 +96,11 @@ func (w *writer) Write(p []byte) (n int, err error) {
 
 	// start next incomplete chunk
 	if w.nextChunk(w.written()) > w.nextChunk(old_written) {
-		go w.writeChunk(last, w.nextErrs)
+		var src io.ReadCloser
+		src, err = w.sourceChunk(last)
+		if err == nil {
+			go w.writeChunk(src, last, w.nextErrs)
+		}
 	}
 
 	return
@@ -88,7 +108,7 @@ func (w *writer) Write(p []byte) (n int, err error) {
 
 // Close the writer, flushing the rest of the buffer to a partial chunk
 func (w *writer) Close() error {
-	go w.buf.Close()
+	w.buf.Close()
 
 	var err error
 	if w.written()%w.chunkSize != 0 {
@@ -96,27 +116,38 @@ func (w *writer) Close() error {
 	}
 	w.nextErrs = nil
 
-	if err == nil {
-		err = w.pile.LastChunk(w.name, int(w.nextChunk(w.written())-1))
+	if err == nil && w.lastChunk != nil {
+		err = w.lastChunk.SetLast()
 	}
 
 	return err
 }
 
 // writeChunk of fixed size (specified in ChunkBuffer) to the pile
-func (w *writer) writeChunk(n int64, err chan<- error) {
-	cs := w.chunkSize
+func (w *writer) writeChunk(src io.ReadCloser, n int64, err chan<- error) {
+	ch, writeErr := w.pile.ChunkWriter(w.name, int(n))
+	if writeErr != nil {
+		err <- writeErr
+		return
+	}
+	w.lastChunk = ch
 
-	ra := w.buf.NewReaderAt(cs * n)
-	ch := w.pile.Chunk(w.name, int(n))
+	_, writeErr = io.Copy(ch, io.LimitReader(src, w.chunkSize))
+	src.Close()
 
-	_, writeErr := io.Copy(ch, io.LimitReader(ra, cs))
-	ra.Close()
-
-	if closeErr := ch.Close(); err == nil {
+	if closeErr := ch.Close(); writeErr == nil {
 		writeErr = closeErr
 	}
 	err <- writeErr
+}
+
+// sourceChunk produces a partial reader for the source buffer
+func (w *writer) sourceChunk(n int64) (io.ReadCloser, error) {
+	if ra, err := w.buf.NewReaderAt(w.chunkSize * n); err != nil {
+		return nil, err
+	} else {
+		return ra, nil
+	}
 }
 
 // nextChunk number

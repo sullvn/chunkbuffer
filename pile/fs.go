@@ -16,9 +16,13 @@ func NewTempFilePile() FilePile {
 	return FilePile{dir: os.TempDir()}
 }
 
-// Chunk returns a file based chunk
-func (fp FilePile) Chunk(name string, part int) Chunk {
-	filename := filepath.Join(fp.dir, name, strconv.Itoa(part))
+// pathTo chunk file
+func (fp FilePile) pathTo(name string, part int) string {
+	return filepath.Join(fp.dir, name, strconv.Itoa(part))
+}
+
+func (fp FilePile) ChunkWriter(name string, part int) (ChunkWriter, error) {
+	filename := fp.pathTo(name, part)
 	dir := filepath.Dir(filename)
 
 	// make sure the directory exists
@@ -27,29 +31,49 @@ func (fp FilePile) Chunk(name string, part int) Chunk {
 	}
 
 	// reuse existing file if possible
-	file, err := os.OpenFile(filename, os.O_RDWR, 0644)
+	file, err := os.OpenFile(filename, os.O_WRONLY, 0644)
 	if os.IsNotExist(err) {
 		file, err = os.Create(filename)
 	}
 
-	return fileChunk{file}
+	return fileChunk{file, fp, name, part}, err
 }
 
-// LastChunk is marked by an subsequent next chunk
-func (fp FilePile) LastChunk(name string, part int) error {
-	_, err := fp.Chunk(name, part+1).Write([]byte{})
-	return err
+// ChunkReader returns a file based chunk reader
+func (fp FilePile) ChunkReader(name string, part int) (ChunkReader, error) {
+	filename := fp.pathTo(name, part)
+	file, err := os.OpenFile(filename, os.O_RDONLY, 0644)
+	if err != nil {
+		err = ErrNotFound
+	}
+
+	return fileChunk{file, fp, name, part}, err
 }
 
 // fileChunk implements the Chunk interface for files
 type fileChunk struct {
 	*os.File
+	fp   FilePile
+	name string
+	part int
 }
 
-// Last chunk if the file doesn't exist or is non-empty
+// Last chunk if the file doesn't exist or is empty
 func (fc fileChunk) Last() bool {
 	if fi, err := fc.Stat(); err != nil || fi.Size() == 0 {
 		return true
 	}
 	return false
+}
+
+// SetLast chunk by creating an empty subsequent chunk file
+func (fc fileChunk) SetLast() error {
+	ch, err := fc.fp.ChunkWriter(fc.name, fc.part+1)
+	if err == nil {
+		_, err = ch.Write([]byte{})
+	}
+	if err == nil {
+		ch.Close()
+	}
+	return err
 }

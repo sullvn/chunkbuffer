@@ -29,8 +29,8 @@ func TestChunkBuffer(t *testing.T) {
 
 			Convey("Then it should be read out, fully intact", func() {
 				out, err := ioutil.ReadAll(cb)
-				So(err, ShouldBeNil)
 				So(out, ShouldResemble, data)
+				So(err, ShouldBeNil)
 			})
 		})
 
@@ -48,8 +48,8 @@ func TestChunkBuffer(t *testing.T) {
 
 			Convey("Then it should be read out, fully intact", func() {
 				out, err := ioutil.ReadAll(cb)
-				So(err, ShouldBeNil)
 				So(out, ShouldResemble, data)
+				So(err, ShouldBeNil)
 			})
 		})
 	})

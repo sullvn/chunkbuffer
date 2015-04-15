@@ -9,17 +9,28 @@ the Pile interface, it can swap out the methods without worry.
 package pile
 
 import (
+	"errors"
 	"io"
 )
 
-// Chunk is a piece of a binary object
-type Chunk interface {
-	io.ReadWriteCloser
+var ErrNotFound = errors.New("pile could not locate the chunk")
+
+// ChunkReader enables reading a chunk and checking if it's
+// the last part
+type ChunkReader interface {
+	io.ReadCloser
 	Last() bool
+}
+
+// ChunkWriter enables writing a chunk and optionally marking
+// it as the last part
+type ChunkWriter interface {
+	io.WriteCloser
+	SetLast() error
 }
 
 // Pile abstracts an underlying method of storing chunks
 type Pile interface {
-	Chunk(name string, part int) Chunk
-	LastChunk(name string, part int) error
+	ChunkReader(name string, part int) (ChunkReader, error)
+	ChunkWriter(name string, part int) (ChunkWriter, error)
 }
